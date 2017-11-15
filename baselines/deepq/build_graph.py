@@ -371,14 +371,16 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
         q_tp1_best_masked = (1.0 - done_mask_ph) * q_tp1_best
 
         # compute RHS of bellman equation
-        q_t_selected_target = rew_t_ph + gamma * q_tp1_best_masked
+        #q_t_selected_target = rew_t_ph + gamma * q_tp1_best_masked
+        optimism_constant = 0.5 # adjust rewards down by optimism constant
+        q_t_selected_target = rew_t_ph + gamma * q_tp1_best_masked - optimism_constant
 
         # compute the error (potentially clipped)
         td_error = q_t_selected - tf.stop_gradient(q_t_selected_target)
         errors = U.huber_loss(td_error)
         weighted_error = tf.reduce_mean(importance_weights_ph * errors)
         
-        optimism_error = U.huber_loss(rand_q_ave - tf.ones(tf.shape(rand_q_ave)))
+        optimism_error = U.huber_loss(rand_q_ave - optimism_constant * tf.ones(tf.shape(rand_q_ave)))
         optimism_error = tf.reduce_mean(optimism_error)
         final_error = weighted_error + optimism_error
         #final_error = weighted_error
