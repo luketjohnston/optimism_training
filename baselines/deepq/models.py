@@ -48,7 +48,7 @@ def _cnn_to_mlp(convs, hiddens, dueling, inpt, num_actions, scope, reuse=False, 
                 if layer_norm:
                     action_out = layers.layer_norm(action_out, center=True, scale=True)
                 #action_out = tf.nn.relu(action_out)
-                random_out = tf.uniform(action_out)
+                random_out = tf.random_uniform(tf.shape(action_out))
                 action_out = tf.sigmoid(action_out)
             action_scores = layers.fully_connected(action_out, num_outputs=num_actions, activation_fn=None)
             random_scores = layers.fully_connected(random_out, num_outputs=num_actions, activation_fn=None)
