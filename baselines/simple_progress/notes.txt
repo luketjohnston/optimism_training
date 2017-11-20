@@ -1,0 +1,4 @@
+numupdates = 9300
+before explained variance is > 0.99 for first time
+with progress loss
+
