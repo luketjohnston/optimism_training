@@ -53,8 +53,7 @@ class Model(object):
         vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
         # TODO check relative loss magnitudes
-        #loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
-        loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
+        loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
 
         params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
