@@ -6,7 +6,7 @@ from baselines import bench
 from baselines.progress.a2c import learn
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
-from baselines.progress.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
+from baselines.progress.policies import CnnPolicy
 
 def train(env_id, num_timesteps, seed, policy, lrschedule, num_cpu):
     def make_env(rank):
@@ -33,7 +33,7 @@ def train(env_id, num_timesteps, seed, policy, lrschedule, num_cpu):
 def main():
     import argparse
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--env', help='environment ID', default='MyNChain-v0')
+    parser.add_argument('--env', help='environment ID', default='MyBox-v0')
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'lstm', 'lnlstm'], default='cnn')
     parser.add_argument('--lrschedule', help='Learning rate schedule', choices=['constant', 'linear'], default='constant')

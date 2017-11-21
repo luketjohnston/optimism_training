@@ -53,8 +53,7 @@ class Model(object):
         vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
         # TODO check relative loss magnitudes
-        #loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
-        loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
+        loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
 
         params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
@@ -109,7 +108,7 @@ class Runner(object):
         self.env = env
         self.model = model
         #nh, nw, nc = env.observation_space.shape
-        nh, nw, nc = 1,1,1
+        nh, nw, nc = 1,1,2
         nenv = env.num_envs
         self.batch_ob_shape = (nenv*nsteps, nh, nw, nc*nstack)
         self.obs = np.zeros((nenv, nh, nw, nc*nstack), dtype=np.uint8)
@@ -130,7 +129,7 @@ class Runner(object):
         self.obs[:, :, :, -self.nc:] = np.reshape(obs, (self.obs.shape))
 
     def run(self):
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_progress = [],[],[],[],[],[]
+        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_progress, mb_real_rewards = [],[],[],[],[],[],[]
         mb_states = self.states
         for n in range(self.nsteps):
             actions, values, states = self.model.step(self.obs, self.states, self.dones)
@@ -139,6 +138,7 @@ class Runner(object):
             mb_values.append(values)
             mb_dones.append(self.dones)
             obs, rewards, dones, _ = self.env.step(actions)
+            mb_real_rewards.append(rewards)
             self.progress = self.progress + (1 - dones) # udpate progress for each environment
             self.states = states
             self.dones = dones
@@ -157,6 +157,7 @@ class Runner(object):
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0)
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0)
         mb_progress = np.asarray(mb_progress, dtype=np.int32).swapaxes(1, 0)
+        mb_real_rewards = np.asarray(mb_real_rewards, dtype=np.int32).swapaxes(1, 0)
         mb_masks = mb_dones[:, :-1]
         mb_dones = mb_dones[:, 1:]
         last_values = self.model.value(self.obs, self.states, self.dones).tolist()
@@ -174,7 +175,7 @@ class Runner(object):
         mb_values = mb_values.flatten()
         mb_masks = mb_masks.flatten()
         mb_progress = mb_progress.flatten()
-        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_progress
+        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_progress, mb_real_rewards
 
 def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01, max_grad_norm=0.5, lr=7e-4, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
     tf.reset_default_graph()
@@ -192,8 +193,10 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
     tstart = time.time()
 
 
+    accumulated_rewards = 0
     for update in range(1, total_timesteps//nbatch+1):
-        obs, states, rewards, masks, actions, values, progress = runner.run()
+        obs, states, rewards, masks, actions, values, progress, real_rewards = runner.run()
+        accumulated_rewards += np.sum(real_rewards)
         policy_loss, value_loss, policy_entropy, progress_loss = model.train(obs, states, rewards, masks, actions, values, progress)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
@@ -206,6 +209,7 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
             logger.record_tabular("value_loss", float(value_loss))
             logger.record_tabular("progress_loss", float(progress_loss))
             logger.record_tabular("explained_variance", float(ev))
+            logger.record_tabular("accumulated rewards", float(accumulated_rewards))
             logger.dump_tabular()
     env.close()
 
