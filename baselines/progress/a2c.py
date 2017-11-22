@@ -16,6 +16,9 @@ from baselines.a2c.utils import Scheduler, make_path, find_trainable_variables
 from baselines.progress.policies import CnnPolicy
 from baselines.a2c.utils import cat_entropy, mse
 
+PROGRESS_REWARD_SCALE = 0.0001
+PROGRESS_LOSS_SCALE = .02
+
 class Model(object):
 
     def __init__(self, policy, ob_space, ac_space, nenvs, nsteps, nstack, num_procs,
@@ -38,9 +41,8 @@ class Model(object):
         train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, reuse=True)
 
         # if you don't want to use progress, set to 0
-        progress_multiplier = 0.01
         progress_target = tf.placeholder(tf.uint8, shape=[nbatch]) #obs
-        progress_loss = progress_multiplier * tf.losses.absolute_difference(
+        progress_loss = PROGRESS_LOSS_SCALE * tf.losses.absolute_difference(
             train_model.progress, progress_target)
         # DONT NEED TO DO THE BELOW, included progress loss in rewards in Runner.run
         ## adjust advantage by progress loss, so policy learns to not go
@@ -167,8 +169,7 @@ class Runner(object):
         mb_dones = mb_dones[:, 1:]
         last_values = self.model.value(self.obs, self.states, self.dones).tolist()
         # compute progress reward. Can only be negative.
-        progress_reward_scale = 0.01
-        mb_progress_rewards = (-1 * progress_reward_scale * 
+        mb_progress_rewards = (-1 * PROGRESS_REWARD_SCALE * 
             np.abs(mb_progress - mb_progress_t))
         # update rewards with progress rewards.
         mb_rewards = mb_rewards + mb_progress_rewards
