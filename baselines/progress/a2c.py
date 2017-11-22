@@ -54,6 +54,7 @@ class Model(object):
         vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
         loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
+        #loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
 
         params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
@@ -170,7 +171,7 @@ class Runner(object):
         mb_progress_rewards = (-1 * progress_reward_scale * 
             np.abs(mb_progress - mb_progress_t))
         # update rewards with progress rewards.
-        #mb_rewards = mb_rewards + mb_progress_rewards
+        mb_rewards = mb_rewards + mb_progress_rewards
 
         #discount/bootstrap off value fn
         for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
