@@ -37,22 +37,22 @@ class Model(object):
         step_model = policy(sess, ob_space, ac_space, nenvs, 1, nstack, reuse=False)
         train_model = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, reuse=True)
 
-
-        # TODO add progress loss to policy
+        # if you don't want to use progress, set to 0
+        progress_multiplier = 0.01
         progress_target = tf.placeholder(tf.uint8, shape=[nbatch]) #obs
-        progress_loss = tf.losses.absolute_difference(
+        progress_loss = progress_multiplier * tf.losses.absolute_difference(
             train_model.progress, progress_target)
-        #progress_loss *= 0.1 # scale factor for progress loss
-        # adjust advantage by progress loss, so policy learns to not go
-        # places where it can't predict the progress
-        ADV_adj = ADV - tf.stop_gradient(progress_loss) 
+        # DONT NEED TO DO THE BELOW, included progress loss in rewards in Runner.run
+        ## adjust advantage by progress loss, so policy learns to not go
+        ## places where it can't predict the progress
+        #ADV_adj = ADV - tf.stop_gradient(progress_loss) 
+        #progress_loss=0
         
 
         neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
-        pg_loss = tf.reduce_mean((ADV_adj) * neglogpac)
+        pg_loss = tf.reduce_mean(ADV * neglogpac)
         vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
         entropy = tf.reduce_mean(cat_entropy(train_model.pi))
-        # TODO check relative loss magnitudes
         loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
 
         params = find_trainable_variables("model")
@@ -129,17 +129,21 @@ class Runner(object):
         self.obs[:, :, :, -self.nc:] = np.reshape(obs, (self.obs.shape))
 
     def run(self):
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_progress, mb_real_rewards = [],[],[],[],[],[],[]
+        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, = [],[],[],[],[]
+        mb_progress, mb_progress_t, mb_real_rewards = [],[],[] # stuff i've added
         mb_states = self.states
         for n in range(self.nsteps):
-            actions, values, states = self.model.step(self.obs, self.states, self.dones)
+            actions, values, states, progress = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(np.copy(self.obs))
             mb_actions.append(actions)
             mb_values.append(values)
             mb_dones.append(self.dones)
+            mb_progress.append(progress)
             obs, rewards, dones, _ = self.env.step(actions)
             mb_real_rewards.append(rewards)
             self.progress = self.progress + (1 - dones) # udpate progress for each environment
+            # save progress to be formatted for minibatch later
+            mb_progress_t.append(self.progress) 
             self.states = states
             self.dones = dones
             for n, done in enumerate(dones):
@@ -148,7 +152,6 @@ class Runner(object):
                     self.progress[n] = 0
             self.update_obs(obs)
             mb_rewards.append(rewards)
-            mb_progress.append(self.progress) # save progress to be formatted for minibatch later
         mb_dones.append(self.dones)
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=np.uint8).swapaxes(1, 0).reshape(self.batch_ob_shape)
@@ -157,13 +160,22 @@ class Runner(object):
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0)
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0)
         mb_progress = np.asarray(mb_progress, dtype=np.int32).swapaxes(1, 0)
+        mb_progress_t = np.asarray(mb_progress_t, dtype=np.int32).swapaxes(1, 0)
         mb_real_rewards = np.asarray(mb_real_rewards, dtype=np.int32).swapaxes(1, 0)
         mb_masks = mb_dones[:, :-1]
         mb_dones = mb_dones[:, 1:]
         last_values = self.model.value(self.obs, self.states, self.dones).tolist()
+        # compute progress reward. Can only be negative.
+        progress_reward_scale = 0.01
+        mb_progress_rewards = (-1 * progress_reward_scale * 
+            np.abs(mb_progress - mb_progress_t))
+        # update rewards with progress rewards.
+        #mb_rewards = mb_rewards + mb_progress_rewards
+
         #discount/bootstrap off value fn
         for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
             rewards = rewards.tolist()
+            # TODO right here I have to add progress rewards
             dones = dones.tolist()
             if dones[-1] == 0:
                 rewards = discount_with_dones(rewards+[value], dones+[0], self.gamma)[:-1]
@@ -174,8 +186,8 @@ class Runner(object):
         mb_actions = mb_actions.flatten()
         mb_values = mb_values.flatten()
         mb_masks = mb_masks.flatten()
-        mb_progress = mb_progress.flatten()
-        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_progress, mb_real_rewards
+        mb_progress_t = mb_progress_t.flatten()
+        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_real_rewards, mb_progress_t
 
 def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01, max_grad_norm=0.5, lr=7e-4, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
     tf.reset_default_graph()
@@ -195,8 +207,8 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
 
     accumulated_rewards = 0
     for update in range(1, total_timesteps//nbatch+1):
-        obs, states, rewards, masks, actions, values, progress, real_rewards = runner.run()
-        accumulated_rewards += np.sum(real_rewards)
+        obs, states, rewards, masks, actions, values, real_rewards, progress = runner.run()
+        accumulated_rewards += np.sum(real_rewards) # only want to record times when we get positive reward
         policy_loss, value_loss, policy_entropy, progress_loss = model.train(obs, states, rewards, masks, actions, values, progress)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
@@ -209,7 +221,7 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
             logger.record_tabular("value_loss", float(value_loss))
             logger.record_tabular("progress_loss", float(progress_loss))
             logger.record_tabular("explained_variance", float(ev))
-            logger.record_tabular("accumulated rewards", float(accumulated_rewards))
+            logger.record_tabular("accumulated rewards", accumulated_rewards)
             logger.dump_tabular()
     env.close()
 
