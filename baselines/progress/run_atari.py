@@ -37,7 +37,8 @@ def main():
     parser.add_argument('--seed', help='RNG seed', type=int, default=0)
     parser.add_argument('--policy', help='Policy architecture', choices=['cnn', 'lstm', 'lnlstm'], default='cnn')
     parser.add_argument('--lrschedule', help='Learning rate schedule', choices=['constant', 'linear'], default='constant')
-    parser.add_argument('--num-timesteps', type=int, default=int(10e6))
+    #parser.add_argument('--num-timesteps', type=int, default=int(10e6))
+    parser.add_argument('--num-timesteps', type=int, default=int(10e10))
     args = parser.parse_args()
     logger.configure()
     train(args.env, num_timesteps=args.num_timesteps, seed=args.seed,

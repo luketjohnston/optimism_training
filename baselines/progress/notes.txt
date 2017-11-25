@@ -2,3 +2,14 @@ numupdates = 9300
 before explained variance is > 0.99 for first time
 with progress loss
 
+TODO: should the value function take into account the progress rewards / losses?
+Do they backpropagate just using policy loss?
+TODO: yes it should.
+
+Right now, the advantage only adds the progress reward to the current reward - 
+it doesn't add the progress to the future reward rollouts, or the value function.
+So the policy will have penalty for choosing actions that will lead to large 
+progress penalties in the non-immediate future.
+
+Ideae
+

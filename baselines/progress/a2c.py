@@ -1,5 +1,6 @@
 import os.path as osp
 import gym
+import sys
 import time
 import joblib
 import logging
@@ -16,8 +17,18 @@ from baselines.a2c.utils import Scheduler, make_path, find_trainable_variables
 from baselines.progress.policies import CnnPolicy
 from baselines.a2c.utils import cat_entropy, mse
 
-PROGRESS_REWARD_SCALE = 0.0001
+PROGRESS_REWARD_SCALE = 0.0001 # this one def works but seems erratic
+PROGRESS_REWARD_SCALE = 0.00001 # this one def works but seems erratic
+#PROGRESS_REWARD_SCALE = 0.00001 # this still finds rewards, but doesn't make them keep reducing any faster than above setting
+#PROGRESS_REWARD_SCALE = 0.0001 # this one def works but seems erratic
 PROGRESS_LOSS_SCALE = .02
+HALT_AFTER_REWARD = False
+
+test_without_progress = False
+if test_without_progress:
+  PROGRESS_REWARD_SCALE = 0.0 
+  PROGRESS_LOSS_SCALE = 0.0
+
 
 class Model(object):
 
@@ -211,6 +222,9 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
     for update in range(1, total_timesteps//nbatch+1):
         obs, states, rewards, masks, actions, values, real_rewards, progress = runner.run()
         accumulated_rewards += np.sum(real_rewards) # only want to record times when we get positive reward
+        if np.sum(real_rewards > 0) > 0 and HALT_AFTER_REWARD:
+          print("Found first reward after %d updates." % update)
+          sys.exit()
         policy_loss, value_loss, policy_entropy, progress_loss = model.train(obs, states, rewards, masks, actions, values, progress)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
