@@ -12,17 +12,29 @@ from baselines.common import set_global_seeds, explained_variance
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.atari_wrappers import wrap_deepmind
 
-from baselines.a2c.utils import discount_with_dones
-from baselines.a2c.utils import Scheduler, make_path, find_trainable_variables
+from baselines.progress.utils import discount_with_dones
+from baselines.progress.utils import Scheduler, make_path, find_trainable_variables
 from baselines.progress.policies import CnnPolicy
-from baselines.a2c.utils import cat_entropy, mse
+from baselines.progress.utils import cat_entropy, mse
 
-PROGRESS_REWARD_SCALE = 0.0001 # this one def works but seems erratic
-PROGRESS_REWARD_SCALE = 0.00001 # this one def works but seems erratic
-#PROGRESS_REWARD_SCALE = 0.00001 # this still finds rewards, but doesn't make them keep reducing any faster than above setting
-#PROGRESS_REWARD_SCALE = 0.0001 # this one def works but seems erratic
-PROGRESS_LOSS_SCALE = .02
+
+# TODO tomorrow:
+# why is it collapsing to always pick the same action? This shouldn't occur, is way not optimal.
+
+# the working params are 0.1 and 0.02, seed 2 and maybe 1?
+
+# original default was 7e-4
+LEARNING_RATE = 7e-4
+
+PROGRESS_REWARD_SCALE = .01 
+#PROGRESS_REWARD_SCALE = 0.000001
+PROGRESS_LOSS_SCALE = 0.02
+#PROGRESS_LOSS_SCALE = 0.002
+MY_ENT_COEF = .01 # originally 0.01
 HALT_AFTER_REWARD = False
+
+
+RENDERING=True
 
 test_without_progress = False
 if test_without_progress:
@@ -33,7 +45,7 @@ if test_without_progress:
 class Model(object):
 
     def __init__(self, policy, ob_space, ac_space, nenvs, nsteps, nstack, num_procs,
-            ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, lr=7e-4,
+            ent_coef=MY_ENT_COEF, vf_coef=0.5, max_grad_norm=0.5, lr=LEARNING_RATE,
             alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6), lrschedule='linear'):
         config = tf.ConfigProto(allow_soft_placement=True,
                                 intra_op_parallelism_threads=num_procs,
@@ -64,8 +76,8 @@ class Model(object):
 
         neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
         pg_loss = tf.reduce_mean(ADV * neglogpac)
-        vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R))
-        entropy = tf.reduce_mean(cat_entropy(train_model.pi))
+        vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model.vf), R)) 
+        entropy = tf.reduce_mean(cat_entropy(train_model.pi)) 
         loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef + progress_loss
         #loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
 
@@ -142,7 +154,7 @@ class Runner(object):
         #self.obs[:, :, :, -self.nc:] = obs
         self.obs[:, :, :, -self.nc:] = np.reshape(obs, (self.obs.shape))
 
-    def run(self):
+    def run(self, rendering=False):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, = [],[],[],[],[]
         mb_progress, mb_progress_t, mb_real_rewards = [],[],[] # stuff i've added
         mb_states = self.states
@@ -154,6 +166,8 @@ class Runner(object):
             mb_dones.append(self.dones)
             mb_progress.append(progress)
             obs, rewards, dones, _ = self.env.step(actions)
+            if rendering:
+              self.env.render(1)
             mb_real_rewards.append(rewards)
             self.progress = self.progress + (1 - dones) # udpate progress for each environment
             # save progress to be formatted for minibatch later
@@ -180,10 +194,11 @@ class Runner(object):
         mb_dones = mb_dones[:, 1:]
         last_values = self.model.value(self.obs, self.states, self.dones).tolist()
         # compute progress reward. Can only be negative.
-        mb_progress_rewards = (-1 * PROGRESS_REWARD_SCALE * 
-            np.abs(mb_progress - mb_progress_t))
+        #print(mb_progress_t)
+        mb_progress_rewards = (-1 * np.abs(mb_progress - mb_progress_t))
         # update rewards with progress rewards.
-        mb_rewards = mb_rewards + mb_progress_rewards
+        mb_rewards = mb_rewards + PROGRESS_REWARD_SCALE * mb_progress_rewards
+        #print(mb_rewards)
 
         #discount/bootstrap off value fn
         for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
@@ -202,7 +217,7 @@ class Runner(object):
         mb_progress_t = mb_progress_t.flatten()
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_real_rewards, mb_progress_t
 
-def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=0.5, ent_coef=0.01, max_grad_norm=0.5, lr=7e-4, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
+def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=0.5, ent_coef=MY_ENT_COEF, max_grad_norm=0.5, lr=LEARNING_RATE, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
     tf.reset_default_graph()
     set_global_seeds(seed)
 
@@ -216,11 +231,16 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
 
     nbatch = nenvs*nsteps
     tstart = time.time()
+    save_dir = 'save/'
+    make_path(save_dir)
+    save_path = save_dir + 'model.save'
+    progress_loss_f = open(save_dir + "progress.txt", "w", 1) # 1 is line buffered
 
 
     accumulated_rewards = 0
     for update in range(1, total_timesteps//nbatch+1):
-        obs, states, rewards, masks, actions, values, real_rewards, progress = runner.run()
+        rendering = ((update // 30) % 50 == 0) and RENDERING
+        obs, states, rewards, masks, actions, values, real_rewards, progress = runner.run(rendering)
         accumulated_rewards += np.sum(real_rewards) # only want to record times when we get positive reward
         if np.sum(real_rewards > 0) > 0 and HALT_AFTER_REWARD:
           print("Found first reward after %d updates." % update)
@@ -229,6 +249,7 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         if update % log_interval == 0 or update == 1:
+            progress_loss_f.write("%f\n" % progress_loss)
             ev = explained_variance(values, rewards)
             logger.record_tabular("nupdates", update)
             logger.record_tabular("total_timesteps", update*nbatch)
@@ -239,7 +260,12 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
             logger.record_tabular("explained_variance", float(ev))
             logger.record_tabular("accumulated rewards", accumulated_rewards)
             logger.dump_tabular()
+        save_interval = 4000
+        if update % save_interval == 0:
+            print("Saving model to %s" % save_path)
+            model.save(save_path)
     env.close()
+ 
 
 if __name__ == '__main__':
     main()

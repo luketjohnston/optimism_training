@@ -27,7 +27,7 @@ def train(env_id, num_timesteps, seed, policy, lrschedule, num_cpu):
         policy_fn = LstmPolicy
     elif policy == 'lnlstm':
         policy_fn = LnLstmPolicy
-    learn(policy_fn, env, seed, nstack=1, total_timesteps=int(num_timesteps * 1.1), lrschedule=lrschedule)
+    learn(policy_fn, env, seed, nstack=1, total_timesteps=int(num_timesteps * 1.1), lrschedule=lrschedule) 
     env.close()
 
 def main():
@@ -42,7 +42,7 @@ def main():
     args = parser.parse_args()
     logger.configure()
     train(args.env, num_timesteps=args.num_timesteps, seed=args.seed,
-        policy=args.policy, lrschedule=args.lrschedule, num_cpu=16)
+        policy=args.policy, lrschedule=args.lrschedule, num_cpu=16) 
 
 if __name__ == '__main__':
     main()
