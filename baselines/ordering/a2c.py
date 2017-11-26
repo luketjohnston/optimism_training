@@ -26,9 +26,9 @@ from baselines.ordering.utils import cat_entropy, mse
 # original default was 7e-4
 LEARNING_RATE = 7e-4
 
-ORDER_REWARD_SCALE = 1.0
+ORDER_REWARD_SCALE = 100.0
 #ORDER_REWARD_SCALE = 0.000001
-ORDER_LOSS_SCALE = 1000.0
+ORDER_LOSS_SCALE = 10.0
 #ORDER_LOSS_SCALE = 0.002
 MY_ENT_COEF = .01 # originally 0.01
 HALT_AFTER_REWARD = False
@@ -255,8 +255,10 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
             logger.record_tabular("total_timesteps", update*nbatch)
             logger.record_tabular("fps", fps)
             logger.record_tabular("policy_entropy", float(policy_entropy))
-            logger.record_tabular("value_loss", float(value_loss))
-            logger.record_tabular("order_loss", float(order_loss))
+            logger.record_tabular("loss_policy_entropy", float(policy_entropy) * MY_ENT_COEF)
+            logger.record_tabular("loss_value", float(value_loss) * 0.5)
+            logger.record_tabular("loss_policy", float(policy_loss))
+            logger.record_tabular("loss_order", float(order_loss))
             logger.record_tabular("explained_variance", float(ev))
             logger.record_tabular("accumulated rewards", accumulated_rewards)
             logger.dump_tabular()
