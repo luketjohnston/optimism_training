@@ -12,10 +12,10 @@ def readdata(filename):
 
 
 
-progress = readdata('save/progress.txt')
+order = readdata('save/order.txt')
 
 
-plt.plot(progress, label='Progress loss') 
+plt.plot(order, label='Order loss') 
 
 plt.legend()
 plt.show()
