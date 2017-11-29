@@ -42,7 +42,7 @@ class CnnPolicy(object):
             return sess.run(v0, {X:ob})
 
         def order(ob, *_args, **_kwargs):
-            return sess.run([order0],{X:ob})
+            return sess.run(order0,{X:ob})
 
         self.X = X
         self.pi = pi
@@ -50,3 +50,4 @@ class CnnPolicy(object):
         self.step = step
         self.value = value
         self.order = order0
+        self.order_fun = order

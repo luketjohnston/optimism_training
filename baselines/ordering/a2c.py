@@ -45,7 +45,7 @@ ORDER_LOSS_SCALE = .1 / ORDER_MIN_STEP # this seems necessary for stability
 #ORDER_LOSS_SCALE = 1.0 
 
 MY_ENT_COEF = 0.01 # originally 0.01
-MY_ENT_COEF = 0.03 # originally 0.01
+MY_ENT_COEF = 0.3 # originally 0.01
 #MY_ENT_COEF = 0.00 # originally 0.01
 HALT_AFTER_REWARD = False
 
@@ -184,6 +184,7 @@ class Model(object):
         self.step_model = step_model
         self.step = step_model.step
         self.value = step_model.value
+        self.order = step_model.order_fun
         self.initial_state = step_model.initial_state
         self.save = save
         self.load = load
@@ -209,7 +210,6 @@ class Runner(object):
         self.nsteps = nsteps
         self.states = model.initial_state
         self.dones = [False for _ in range(nenv)]
-        self.last_order = [0 for _ in range(nenv)]
 
     def update_obs(self, obs):
         # Do frame-stacking here instead of the FrameStack wrapper to reduce
@@ -224,7 +224,7 @@ class Runner(object):
 
     def run(self, rendering=False, display=False):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, = [],[],[],[],[]
-        mb_order, mb_last_order, mb_real_rewards, mb_prev_obs = [],[],[],[] # stuff i've added
+        mb_order, mb_next_order, mb_real_rewards, mb_prev_obs = [],[],[],[] # stuff i've added
         mb_states = self.states
         for n in range(self.nsteps):
             actions, values, states, order = self.model.step(self.obs, self.states, self.dones)
@@ -234,10 +234,9 @@ class Runner(object):
             mb_values.append(values)
             mb_dones.append(self.dones)
             mb_order.append(order)
-            mb_last_order.append(self.last_order) # for minibatch, need to know previous order
+            if not n == 0:
+              mb_next_order.append(order)
 
-
-            self.last_order = order # save order from this step for use with next step
             obs, rewards, dones, _ = self.env.step(actions)
             if rendering:
               self.env.render(1)
@@ -245,17 +244,18 @@ class Runner(object):
               self.model.display('order')
             mb_real_rewards.append(rewards)
             # save order to be formatted for minibatch later
-            #mb_order_t.append(self.order) 
             self.states = states
             self.dones = dones
             for n, done in enumerate(dones):
                 if done:
                     self.obs[n] = self.obs[n]*0
-                    self.last_order[n] = 0 # order starts at 0 for new env
             self.update_obs(obs)
             self.update_prev_obs(self.prev_raw_obs)
             self.prev_raw_obs = obs
             mb_rewards.append(rewards)
+
+        # get order for last state
+        mb_next_order.append(self.model.order(self.obs))
         mb_dones.append(self.dones)
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=np.uint8).swapaxes(1, 0).reshape(self.batch_ob_shape)
@@ -265,7 +265,7 @@ class Runner(object):
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(1, 0)
         mb_dones = np.asarray(mb_dones, dtype=np.bool).swapaxes(1, 0)
         mb_order = np.asarray(mb_order, dtype=np.float32).swapaxes(1, 0)
-        mb_last_order = np.asarray(mb_last_order, dtype=np.float32).swapaxes(1, 0)
+        mb_next_order = np.asarray(mb_next_order, dtype=np.float32).swapaxes(1, 0)
         #mb_order_t = np.asarray(mb_order_t, dtype=np.int32).swapaxes(1, 0)
         mb_real_rewards = np.asarray(mb_real_rewards, dtype=np.int32).swapaxes(1, 0)
         mb_masks = mb_dones[:, :-1]
@@ -275,14 +275,14 @@ class Runner(object):
         # if we run with the assumption that "order" will actually converge to estimate
         # of frequency of reaching state, then we want to go places that are seldom visited:
 
-        order_diffs = mb_order - mb_last_order # want this to be negative
+        order_diffs = mb_next_order - mb_order # want this to be positive
         mb_order_rewards = (order_diffs) # reward increasing order, penalize decreasing it.
         #mb_order_rewards = -1 * order_diffs
         # actually we need the sqrt, it encourages long loops... I think? otherwises the discount is all that is encouraging long loops.
         #mb_order_rewards = (-1 * np.sqrt(np.maximum(ORDER_MIN_STEP + order_diffs, 0.0))) # remove sqrt here, don't want loops to be +EV
         #mb_order_rewards = (-1 * np.abs(ORDER_MIN_STEP - order_diffs))
         # update rewards with order rewards.
-        if mb_actions[0,0] == 2:
+        if mb_actions[0,0] == 3:
           #print(mb_order_rewards[0,0])
           pass
         mb_rewards = mb_rewards + ORDER_REWARD_SCALE * mb_order_rewards
@@ -301,8 +301,8 @@ class Runner(object):
         mb_values = mb_values.flatten()
         mb_masks = mb_masks.flatten()
         mb_order = mb_order.flatten()
-        mb_last_order = mb_last_order.flatten()
-        return mb_obs, mb_prev_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_real_rewards, mb_last_order, mb_order_rewards
+        mb_next_order = mb_next_order.flatten()
+        return mb_obs, mb_prev_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_real_rewards, mb_next_order, mb_order_rewards
 
 def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=VF_COEF, ent_coef=MY_ENT_COEF, max_grad_norm=0.5, lr=LEARNING_RATE, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
     tf.reset_default_graph()
@@ -331,7 +331,7 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
     for update in range(1, total_timesteps//nbatch+1):
         rendering = ((update // 30) % 50 == 0) and RENDERING
         display = (update % 200) == 1
-        obs, prev_obs, states, rewards, masks, actions, values, real_rewards, last_order, order_rewards = runner.run(rendering, display)
+        obs, prev_obs, states, rewards, masks, actions, values, real_rewards, next_order, order_rewards = runner.run(rendering, display)
         accumulated_rewards += np.sum(real_rewards) # only want to record times when we get positive reward
         order_rewards = np.sum(order_rewards)
         if np.sum(real_rewards > 0) > 0 and HALT_AFTER_REWARD:
