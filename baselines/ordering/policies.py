@@ -14,21 +14,19 @@ class CnnPolicy(object):
         X = tf.placeholder(tf.float32, shape=[None,nh,nw,nc*nstack]) #obs
         with tf.variable_scope("model", reuse=reuse):
             # For now, let's use a fully connected model:
-            #X1 = tf.cast(X, tf.float32)/255.
-            h = fc(tf.contrib.layers.flatten(X), 'fc1', nh=16, init_scale=np.sqrt(2))
-            h2 = fc(h, 'fc2', nh=16, init_scale=np.sqrt(2))
-            h3 = fc(h2, 'fc3', nh=16, init_scale=np.sqrt(2))
-            #h = conv(tf.cast(X, tf.float32)/255., 'c1', nf=32, rf=1, stride=1, init_scale=np.sqrt(2))
-            #h2 = conv(h, 'c2', nf=64, rf=1, stride=1, init_scale=np.sqrt(2))
-            #h3 = conv(h2, 'c3', nf=64, rf=1, stride=1, init_scale=np.sqrt(2))
-            #h3 = conv_to_fc(h3)
-            #h4 = fc(h2, 'fc4', nh=512, init_scale=np.sqrt(2))
-            h4 = fc(h3, 'fc4', nh=16, init_scale=np.sqrt(2))
-            pi = fc(h4, 'pi', nact, act=lambda x:x) 
-            vf = fc(h4, 'v', 1, act=lambda x:x)
+
+            # First, the order part of the model:
+            order_h1 = fc(tf.contrib.layers.flatten(X), 'order_fc1', nh=16, init_scale=np.sqrt(2))
+            order_h2 = fc(order_h1, 'order_fc2', nh=16, init_scale=np.sqrt(2))
+            orderf = fc(order_h2, 'order', 1, act=lambda x:x) # default act is relu
+
+            # Now, the policy / value part:
+            h1 = fc(tf.contrib.layers.flatten(X), 'fc1', nh=16, init_scale=np.sqrt(2))
+            h2 = fc(tf.contrib.layers.flatten(X), 'fc2', nh=16, init_scale=np.sqrt(2))
+            pi = fc(h2, 'pi', nact, act=lambda x:x) 
+            vf = fc(h2, 'v', 1, act=lambda x:x)
             """ Outputs a number that we will require to be monotonically increasing
             throughout exploration of the environment."""
-            orderf = fc(h4, 'progress', 1, act=lambda x:x) # default act is relu
 
 
         v0 = vf[:, 0]

@@ -19,24 +19,24 @@ from baselines.ordering.utils import cat_entropy, mse
 
 
 # original default was 7e-4
-LEARNING_RATE = 7e-2
-#LEARNING_RATE = 2e-2
-# was working with -3 learning rate to learn order
+ORDER_LEARNING_RATE = 7e-2
+LEARNING_RATE = 7e-4
 
 ENV_N = 15
-
-# NOTE: I have env setup to just move randomly. So
-# no matter policy initialization, should have same order solution!
 
 ORDER_MIN_STEP = 1.0 # This seems to work well (.001)
 ORDER_LOSS_SCALE = 1.0 / ORDER_MIN_STEP # this seems necessary for stability
 
-zero_all_except_order = True
+zero_order = False
+zero_all_except_order = False
+
+if zero_order:
+  ORDER_LOSS_SCALE = 0.0
 
 
-POLICY_LOSS_SCALE = 100.0
-ORDER_REWARD_SCALE = 1.000 
-ORDER_REWARD_SCALE = .01 / ORDER_MIN_STEP
+POLICY_LOSS_SCALE = 1.0
+ORDER_REWARD_SCALE = .01 
+#ORDER_REWARD_SCALE = .01 / ORDER_MIN_STEP
 
 MY_ENT_COEF = 0.01 # originally 0.01
 HALT_AFTER_REWARD = False
@@ -49,10 +49,7 @@ if zero_all_except_order:
   MY_ENT_COEF = 0.0
   VF_COEF = 0.0
 
-
-
 RENDERING=True
-
 
 class Model(object):
 
@@ -71,6 +68,7 @@ class Model(object):
         ADV = tf.placeholder(tf.float32, [nbatch])
         R = tf.placeholder(tf.float32, [nbatch])
         LR = tf.placeholder(tf.float32, [])
+        ORDER_LR = tf.placeholder(tf.float32, [])
 
         PREV_ORDER = tf.placeholder(tf.float32, [nbatch]) # ordering output for previous timestep.
 
@@ -78,45 +76,41 @@ class Model(object):
         train_model1 = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, reuse=True) # model for previous step
         train_model2 = policy(sess, ob_space, ac_space, nenvs, nsteps, nstack, reuse=True) # model for this step
 
-        # the best solution to ordering will be for most visited states to have high order,
-        # least visited states low order
 
-        # penalize out of order things, but to prevent order from blowing up,
-        # also have to penalize l2_loss of order magnitude.
-        #order_loss = ORDER_LOSS_SCALE * tf.nn.relu(
-        #    train_model.order - PREV_ORDER) + tf.nn.l2_loss(train_model.order)
-
-        #unscaled_order_loss = tf.reduce_mean(tf.sqrt(1e-4 + tf.nn.relu(ORDER_MIN_STEP - train_model2.order + train_model1.order)))
+        # compute order loss, separate from rest of model.
         unscaled_order_loss = tf.reduce_mean(tf.sqrt(1e-4 + tf.abs(ORDER_MIN_STEP - train_model2.order + train_model1.order)))
-        #unscaled_order_loss = tf.reduce_mean(tf.abs(train_model2.order - train_model1.order - ORDER_MIN_STEP))
-        scaled_order_loss = ORDER_LOSS_SCALE * unscaled_order_loss
-        #regularization_order_loss = ORDER_REG_SCALE * tf.reduce_mean(tf.nn.l2_loss(train_model.order))
-        regularization_order_loss = 0.0
-        order_loss = (scaled_order_loss + regularization_order_loss)
+        order_loss = ORDER_LOSS_SCALE * unscaled_order_loss
 
         neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model2.pi, labels=A)
-        pg_loss = tf.reduce_mean(ADV * neglogpac)
-        vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model2.vf), R)) 
+        pg_loss = tf.reduce_mean(ADV * neglogpac) 
+        vf_loss = tf.reduce_mean(mse(tf.squeeze(train_model2.vf), R))  
         entropy = tf.reduce_mean(cat_entropy(train_model2.pi)) 
-        loss = pg_loss*POLICY_LOSS_SCALE - entropy*ent_coef + vf_loss * vf_coef + order_loss
-        #loss = pg_loss - entropy*ent_coef + vf_loss * vf_coef
+        loss = pg_loss*POLICY_LOSS_SCALE - entropy*ent_coef + vf_loss * vf_coef
 
         params = find_trainable_variables("model")
         grads = tf.gradients(loss, params)
+        order_grads = tf.gradients(order_loss, params)
         if max_grad_norm is not None:
             grads, grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
+            order_grads, order_grad_norm = tf.clip_by_global_norm(order_grads, max_grad_norm)
         grads = list(zip(grads, params))
+        order_grads = list(zip(order_grads, params))
         trainer = tf.train.RMSPropOptimizer(learning_rate=LR, decay=alpha, epsilon=epsilon)
-        _train = trainer.apply_gradients(grads)
+        order_trainer = tf.train.RMSPropOptimizer(learning_rate=ORDER_LR, decay=alpha, epsilon=epsilon)
+        _train1 = trainer.apply_gradients(grads)
+        _train2 = order_trainer.apply_gradients(order_grads)
+        _train = tf.group(_train1, _train2)
 
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
+        order_lr = Scheduler(v=ORDER_LEARNING_RATE, nvalues=total_timesteps, schedule=lrschedule)
 
         def train(obs, states, rewards, masks, actions, values, prev_obs):
             advs = rewards - values
             for step in range(len(obs)):
                 cur_lr = lr.value()
+                order_cur_lr = order_lr.value()
             td_map = {train_model2.X:obs, A:actions, ADV:advs, R:rewards, LR:cur_lr, 
-                train_model1.X:prev_obs}
+                ORDER_LR:order_cur_lr, train_model1.X:prev_obs}
             if states != []:
                 td_map[train_model2.S] = states
                 td_map[train_model2.M] = masks
