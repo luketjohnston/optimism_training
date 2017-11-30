@@ -18,10 +18,9 @@ from baselines.ordering.policies import CnnPolicy
 from baselines.ordering.utils import cat_entropy, mse
 
 
-# the working params are 0.1 and 0.02, seed 2 and maybe 1?
-
 # original default was 7e-4
-LEARNING_RATE = 7e-4
+LEARNING_RATE = 7e-2
+#LEARNING_RATE = 2e-2
 # was working with -3 learning rate to learn order
 
 ENV_N = 15
@@ -29,29 +28,20 @@ ENV_N = 15
 # NOTE: I have env setup to just move randomly. So
 # no matter policy initialization, should have same order solution!
 
-zero_all_except_order = False
+ORDER_MIN_STEP = 1.0 # This seems to work well (.001)
+ORDER_LOSS_SCALE = 1.0 / ORDER_MIN_STEP # this seems necessary for stability
+
+zero_all_except_order = True
 
 
-ORDER_MIN_STEP = .001 # This seems to work well (.001)
-#ORDER_MIN_STEP = 1.00 # This seems to work well (.001)
-
-POLICY_LOSS_SCALE = 1000.0
-#POLICY_LOSS_SCALE = 1.0
-ORDER_REWARD_SCALE = 100.0
-ORDER_REWARD_SCALE = 1.0
-#ORDER_REG_SCALE = .001
-ORDER_LOSS_SCALE = .1 / ORDER_MIN_STEP # this seems necessary for stability
-#ORDER_LOSS_SCALE = 1.0
-#ORDER_LOSS_SCALE = 1.0 
+POLICY_LOSS_SCALE = 100.0
+ORDER_REWARD_SCALE = 1.000 
+ORDER_REWARD_SCALE = .01 / ORDER_MIN_STEP
 
 MY_ENT_COEF = 0.01 # originally 0.01
-MY_ENT_COEF = 0.3 # originally 0.01
-#MY_ENT_COEF = 0.00 # originally 0.01
 HALT_AFTER_REWARD = False
 
-VF_COEF = 0.5 # originally 0.5
-VF_COEF = 500.0 # originally 0.5
-#VF_COEF = 0.0
+VF_COEF = .5 # originally 0.5
 
 if zero_all_except_order:
   POLICY_LOSS_SCALE = 0.0
@@ -96,7 +86,7 @@ class Model(object):
         #order_loss = ORDER_LOSS_SCALE * tf.nn.relu(
         #    train_model.order - PREV_ORDER) + tf.nn.l2_loss(train_model.order)
 
-        unscaled_order_loss = tf.reduce_mean(tf.sqrt(1e-4 + tf.nn.relu(ORDER_MIN_STEP - train_model2.order + train_model1.order)))
+        #unscaled_order_loss = tf.reduce_mean(tf.sqrt(1e-4 + tf.nn.relu(ORDER_MIN_STEP - train_model2.order + train_model1.order)))
         unscaled_order_loss = tf.reduce_mean(tf.sqrt(1e-4 + tf.abs(ORDER_MIN_STEP - train_model2.order + train_model1.order)))
         #unscaled_order_loss = tf.reduce_mean(tf.abs(train_model2.order - train_model1.order - ORDER_MIN_STEP))
         scaled_order_loss = ORDER_LOSS_SCALE * unscaled_order_loss
@@ -176,6 +166,16 @@ class Model(object):
             if self.viewer is None:
                 self.viewer = rendering.SimpleImageViewer()
             self.viewer.imshow(im)
+
+            # let's also print out the value function:
+            vals = self.step_model.value(batch)
+            vals = np.reshape(vals, [n+1,n+1,1])
+            #print("Value of root:")
+            #print(vals[0,0])
+            #print("VAlues:")
+            #print(vals[-1,:])
+
+
 
         self.train = train
         self.viewer = None
@@ -275,17 +275,23 @@ class Runner(object):
         # if we run with the assumption that "order" will actually converge to estimate
         # of frequency of reaching state, then we want to go places that are seldom visited:
 
+        
         order_diffs = mb_next_order - mb_order # want this to be positive
-        mb_order_rewards = (order_diffs) # reward increasing order, penalize decreasing it.
+        mb_order_rewards = np.maximum(order_diffs, 0.0) # reward increasing order, penalize decreasing it.
+        mb_order_rewards -= (np.maximum(-order_diffs, 0))
+        mb_order_rewards *= ORDER_REWARD_SCALE
+        mb_rewards = mb_rewards + mb_order_rewards
+
+
+
         #mb_order_rewards = -1 * order_diffs
         # actually we need the sqrt, it encourages long loops... I think? otherwises the discount is all that is encouraging long loops.
         #mb_order_rewards = (-1 * np.sqrt(np.maximum(ORDER_MIN_STEP + order_diffs, 0.0))) # remove sqrt here, don't want loops to be +EV
         #mb_order_rewards = (-1 * np.abs(ORDER_MIN_STEP - order_diffs))
         # update rewards with order rewards.
-        if mb_actions[0,0] == 3:
-          #print(mb_order_rewards[0,0])
-          pass
-        mb_rewards = mb_rewards + ORDER_REWARD_SCALE * mb_order_rewards
+        #if mb_actions[0,0] == 0:
+        #  print(mb_order_rewards[0,0])
+        #  pass
 
         #discount/bootstrap off value fn
         for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
