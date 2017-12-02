@@ -31,7 +31,7 @@ PROGRESS_MIN_STEP = 1.000 # This seems to work well (.001)
 PROGRESS_LOSS_SCALE = 1.0 / PROGRESS_MIN_STEP # this seems necessary for stability
 
 zero_progress = False
-zero_all_except_progress = True
+zero_all_except_progress = False
 
 if zero_progress:
   PROGRESS_LOSS_SCALE = 0.0
@@ -255,7 +255,7 @@ class Runner(object):
             mb_next_progress_p.append(next_progress_p)
 
             #equal_ind = (next_progress_p == progress_p) 
-            prog_dones = (next_progress_p <= self.progress + PROGRESS_MIN_STEP)
+            prog_dones = (next_progress_p < self.progress + PROGRESS_MIN_STEP)
 
 
             for i,done in enumerate(prog_dones):
