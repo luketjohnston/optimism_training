@@ -27,7 +27,7 @@ LEARNING_RATE = 7e-4
 
 ENV_N = 15
 
-PROGRESS_MIN_STEP = .001 # This seems to work well (.001)
+PROGRESS_MIN_STEP = 1.000 # This seems to work well (.001)
 PROGRESS_LOSS_SCALE = 1.0 / PROGRESS_MIN_STEP # this seems necessary for stability
 
 zero_progress = False
@@ -50,6 +50,8 @@ HALT_AFTER_REWARD = False
 
 VF_COEF = .5 # originally 0.5
 #VF_COEF = 0.0 # originally 0.5
+
+NEG_LOSS_GRAD = 1.0
 
 if zero_all_except_progress:
   POLICY_LOSS_SCALE = 0.0
@@ -86,7 +88,9 @@ class Model(object):
 
         step_error = train_model.progress - PROGRESS_T
         # use abs cuz want grads for pos and neg to be the same.
-        unscaled_prog_loss = tf.reduce_mean(tf.abs(step_error))
+        pos_prog_loss = tf.reduce_mean(tf.nn.relu(step_error))
+        neg_prog_loss = tf.reduce_mean(tf.nn.relu(-step_error)*NEG_LOSS_GRAD)
+        unscaled_prog_loss = pos_prog_loss + neg_prog_loss
         progress_loss = PROGRESS_LOSS_SCALE * unscaled_prog_loss
 
         neglogpac = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=train_model.pi, labels=A)
@@ -268,9 +272,9 @@ class Runner(object):
                     # if env was just reset, zero all previous observations in stack.
                     self.obs[n,:,:,:-self.nc] = self.obs[n,:,:,:-self.nc]*0
                     # reset progress for env n
-                    self.progress[n] = -1
+                    self.progress[n] = -PROGRESS_MIN_STEP
             mb_rewards.append(rewards)
-            self.progress = self.progress + 1 # udpate progress for each environment
+            self.progress = self.progress + PROGRESS_MIN_STEP # udpate progress for each environment
 
         mb_dones.append(self.dones)
         #batch of steps to batch of rollouts
