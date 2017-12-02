@@ -38,7 +38,7 @@ if zero_progress:
 
 
 POLICY_LOSS_SCALE = 1
-PROGRESS_REWARD_SCALE = 1 
+PROGRESS_REWARD_SCALE = 1
 #PROGRESS_REWARD_SCALE = 1.0
 #PROGRESS_REWARD_SCALE = .01 / PROGRESS_MIN_STEP
 
@@ -166,7 +166,7 @@ class Model(object):
             #print(np.reshape(vals,[n+1,n+1]))
             #print(np.reshape(batch,[n+1,n+1,2])[:,:,1])
             vals = np.reshape(vals, [2*n+1,2*n+1,1])
-            print(vals[n-3:n+4,n-3:n+3])
+            #print(vals[n-3:n+4,n-3:n+4])
 
             # to test if flattening / reshaping working correctly
             #vals = np.array([x+y for x in range(-n,n+1) for y in range(-n,n+1)])
@@ -222,7 +222,7 @@ class Runner(object):
         self.update_obs(obs)
         self.gamma = gamma
         self.nsteps = nsteps
-        self.dones = [False for _ in range(nenv)]
+        self.dones = np.array([False for _ in range(nenv)])
         self.progress = np.array([0 for _ in range(nenv)])
 
     def update_obs(self, obs):
@@ -239,6 +239,7 @@ class Runner(object):
         extra_progress_updates = []
         for n in range(self.nsteps):
             # get action, value of current state, progress pred of cur state.
+            prev_obs = np.copy(self.obs)
             actions, values, progress_p = self.model.step(self.obs, self.dones)
             # save all observations, actions, values, dones, progress predictions
             mb_obs.append(np.copy(self.obs))
@@ -246,19 +247,25 @@ class Runner(object):
             mb_values.append(values)
             mb_dones.append(self.dones)
             mb_progress_p.append(progress_p)
-            mb_progress_t.append(self.progress)
+            mb_progress_t.append(np.copy(self.progress))
             # using actions, move in environment. Save rewards, obs, dones
             obs, rewards, env_dones, _ = self.env.step(actions)
             self.update_obs(obs)
             next_progress_p = self.model.progress(self.obs)
             mb_next_progress_p.append(next_progress_p)
-            prog_dones = (next_progress_p < progress_p)
+
+            #equal_ind = (next_progress_p == progress_p) 
+            prog_dones = (next_progress_p <= self.progress + PROGRESS_MIN_STEP)
+
+
             for i,done in enumerate(prog_dones):
               if done:
-                self.env.reset_i(i) # reset ith environment
                 # save progress prediction and target for later training step
+                #if not equal_ind[i]:
                 extra_progress_updates.append((
-                    self.obs[i],self.progress[i] + PROGRESS_MIN_STEP))
+                    np.copy(self.obs[i]),np.copy(self.progress[i]) + PROGRESS_MIN_STEP))
+                # reset env, and make sure to update obs for next timestep
+                self.obs[i,:,:,-self.nc:] = self.env.reset_i(i) 
             self.dones = np.logical_or(env_dones, prog_dones)
 
             if rendering:
@@ -299,6 +306,9 @@ class Runner(object):
         mb_progress_rewards = progress_diffs 
         mb_progress_rewards *= (1 - mb_dones) # zero intrinsic reward if done
         mb_progress_rewards *= PROGRESS_REWARD_SCALE
+
+        #print(mb_obs)
+        #print(mb_progress_t)
 
 
         mb_rewards = mb_rewards + mb_progress_rewards

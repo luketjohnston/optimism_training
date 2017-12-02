@@ -26,8 +26,6 @@ class CnnPolicy(object):
             h3 = fc(h2, 'fc3', nh=16, init_scale=1.0/np.sqrt(16))
             pi = fc(h3, 'pi', nact, act=lambda x:x) 
             vf = fc(h3, 'v', 1, act=lambda x:x)
-            """ Outputs a number that we will require to be monotonically increasing
-            throughout exploration of the environment."""
 
 
         v0 = vf[:, 0]
