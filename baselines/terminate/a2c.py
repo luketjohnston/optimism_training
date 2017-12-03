@@ -43,7 +43,7 @@ PROGRESS_REWARD_SCALE = 1.00
 #PROGRESS_REWARD_SCALE = 1.0
 #PROGRESS_REWARD_SCALE = .01 / PROGRESS_MIN_STEP
 
-MY_ENT_COEF = 0.1 # originally 0.01
+MY_ENT_COEF = 0.01 # originally 0.01
 #MY_ENT_COEF = 0.00 # originally 0.01
 #MY_ENT_COEF = 1 # originally 0.01
 #MY_ENT_COEF = 1.00 # originally 0.01
@@ -257,6 +257,7 @@ class Runner(object):
 
             #equal_ind = (next_progress_p == progress_p) 
             prog_dones = (next_progress_p < self.progress + PROGRESS_MIN_STEP)
+            prog_dones = (next_progress_p < self.progress)
 
 
             for i,done in enumerate(prog_dones):
@@ -265,6 +266,9 @@ class Runner(object):
                 #if not equal_ind[i]:
                 extra_progress_updates.append((
                     np.copy(self.obs[i]),np.copy(self.progress[i]) + PROGRESS_MIN_STEP))
+                # also want to down-weight current state, so ends of loops decline in progress
+                #extra_progress_updates.append((
+                #    np.copy(prev_obs[i]), np.copy(next_progress_p[i]) - PROGRESS_MIN_STEP))
                 # reset env, and make sure to update obs for next timestep
                 self.obs[i,:,:,-self.nc:] = self.env.reset_i(i) 
             self.dones = np.logical_or(env_dones, prog_dones)
