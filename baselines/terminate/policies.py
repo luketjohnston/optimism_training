@@ -33,7 +33,7 @@ class CnnPolicy(object):
         a0 = sample(pi)
 
         # manual computation of desired progress:
-        #progress0 = 0.1 * tf.reduce_sum(tf.abs(X), axis=[1,2,3])
+        #progress0 = tf.reduce_sum(tf.abs(X), axis=[1,2,3])
 
         def step(ob, *_args, **_kwargs):
             a, v, o = sess.run([a0, v0, progress0], {X:ob})

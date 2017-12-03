@@ -38,11 +38,12 @@ if zero_progress:
 
 
 POLICY_LOSS_SCALE = 1
-PROGRESS_REWARD_SCALE = 1
+PROGRESS_REWARD_SCALE = 1.00
+#PROGRESS_REWARD_SCALE = .01
 #PROGRESS_REWARD_SCALE = 1.0
 #PROGRESS_REWARD_SCALE = .01 / PROGRESS_MIN_STEP
 
-MY_ENT_COEF = 0.01 # originally 0.01
+MY_ENT_COEF = 0.1 # originally 0.01
 #MY_ENT_COEF = 0.00 # originally 0.01
 #MY_ENT_COEF = 1 # originally 0.01
 #MY_ENT_COEF = 1.00 # originally 0.01
@@ -302,9 +303,12 @@ class Runner(object):
         # If the below is negative, then we are transitioning to 
         # TODO: should I use predicted or actual progress?
         # the below is always positive, unless last step (env resets when dec prog)
+
+        # TODO A1: add negative backwards progress reward (so explores diff loops)
         progress_diffs = mb_next_progress_p - mb_progress_t  
-        mb_progress_rewards = progress_diffs 
-        mb_progress_rewards *= (1 - mb_dones) # zero intrinsic reward if done
+        mb_progress_rewards = - (mb_next_progress_p <= mb_progress_p).astype(np.float32)
+        #mb_progress_rewards = - (progress_diffs < 0).astype(np.float32)
+        #mb_progress_rewards *= (1 - mb_dones) # zero intrinsic reward if done
         mb_progress_rewards *= PROGRESS_REWARD_SCALE
 
         #print(mb_obs)
@@ -366,7 +370,8 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
           print("Found first reward after %d updates." % update)
           sys.exit()
         policy_loss, value_loss, policy_entropy, progress_loss, total_loss = model.train(obs, rewards, masks, actions, values, progress_t)
-        progress_end_loss = model.train_only_progress(extra_progress_updates)
+        if not SKIPPING_PROGRESS_GRADS:
+          progress_end_loss = model.train_only_progress(extra_progress_updates)
         nseconds = time.time()-tstart
         fps = int((update*nbatch)/nseconds)
         if update % log_interval == 0 or update == 1:
@@ -386,7 +391,8 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
             logger.record_tabular("loss_value", float(value_loss) * VF_COEF)
             logger.record_tabular("loss_policy", float(policy_loss) * POLICY_LOSS_SCALE)
             logger.record_tabular("loss_progress", float(progress_loss))
-            logger.record_tabular("loss_progress_end", (progress_end_loss))
+            if not SKIPPING_PROGRESS_GRADS:
+              logger.record_tabular("loss_progress_end", (progress_end_loss))
             #logger.record_tabular("explained_variance", float(ev))
             logger.record_tabular("accumulated rewards", accumulated_rewards)
             logger.dump_tabular()
