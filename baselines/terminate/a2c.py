@@ -52,7 +52,9 @@ HALT_AFTER_REWARD = False
 VF_COEF = .5 # originally 0.5
 #VF_COEF = 0.0 # originally 0.5
 
-NEG_LOSS_GRAD = 1.0
+# when we take a downward step, this is the gradient of the initial state (before
+# taking the step). Want it to be large (so dead ends get downweighted).
+DOWNWARD_STEP_END_GRAD = 5
 
 if zero_all_except_progress:
   POLICY_LOSS_SCALE = 0.0
@@ -88,9 +90,9 @@ class Model(object):
 
 
         step_error = train_model.progress - PROGRESS_T
-        # use abs cuz want grads for pos and neg to be the same.
-        pos_prog_loss = tf.reduce_mean(tf.nn.relu(step_error))
-        neg_prog_loss = tf.reduce_mean(tf.nn.relu(-step_error)*NEG_LOSS_GRAD)
+        # when decreasing progress, decrease it fast.
+        pos_prog_loss = tf.reduce_mean(tf.nn.relu(step_error)*DOWNWARD_STEP_END_GRAD) 
+        neg_prog_loss = tf.reduce_mean(tf.nn.relu(-step_error))
         unscaled_prog_loss = pos_prog_loss + neg_prog_loss
         progress_loss = PROGRESS_LOSS_SCALE * unscaled_prog_loss
 
@@ -122,6 +124,8 @@ class Model(object):
 
         def train(obs, rewards, masks, actions, values, progress_t):
             advs = rewards - values
+            # let's try no var reduction. This means neg rewards make pol less likely.
+            advs = rewards 
             for step in range(len(obs)):
                 cur_lr = lr.value()
                 progress_cur_lr = progress_lr.value()
@@ -257,7 +261,11 @@ class Runner(object):
 
             #equal_ind = (next_progress_p == progress_p) 
             prog_dones = (next_progress_p < self.progress + PROGRESS_MIN_STEP)
-            prog_dones = (next_progress_p < self.progress)
+            prog_dones = (next_progress_p <= self.progress)
+
+            # TODO: OK THE PROBLEM IS that the down-weighting is only happening on
+            # the final state of the dead end.
+            # this is fine, it just has to happen faster than the upweights
 
 
             for i,done in enumerate(prog_dones):
@@ -265,10 +273,10 @@ class Runner(object):
                 # save progress prediction and target for later training step
                 #if not equal_ind[i]:
                 extra_progress_updates.append((
-                    np.copy(self.obs[i]),np.copy(self.progress[i]) + PROGRESS_MIN_STEP))
+                    np.copy(self.obs[i]),np.copy(self.progress[i]) + 1.0)) # just update upward
                 # also want to down-weight current state, so ends of loops decline in progress
-                #extra_progress_updates.append((
-                #    np.copy(prev_obs[i]), np.copy(next_progress_p[i]) - PROGRESS_MIN_STEP))
+                extra_progress_updates.append((
+                    np.copy(prev_obs[i]), np.copy(self.progress[i]) - 1.0)) # just update downward.
                 # reset env, and make sure to update obs for next timestep
                 self.obs[i,:,:,-self.nc:] = self.env.reset_i(i) 
             self.dones = np.logical_or(env_dones, prog_dones)
@@ -310,7 +318,13 @@ class Runner(object):
 
         # TODO A1: add negative backwards progress reward (so explores diff loops)
         progress_diffs = mb_next_progress_p - mb_progress_t  
-        mb_progress_rewards = - (mb_next_progress_p <= mb_progress_p).astype(np.float32)
+        mb_progress_rewards = mb_next_progress_p - mb_progress_p
+        # looping has to have some negative reward, so that after progress of loop
+        # has converged, there is a negative cost to it, so policy is updated to not start the loop.
+        # THE above comment is not true. negative ADVANTAGE is what decreases prob, not total reward.
+        # mb_progress_rewards -= (mb_progress_rewards <= 0) 
+        #print(mb_progress_rewards <= 0)
+        #mb_progress_rewards = - (mb_next_progress_p <= mb_progress_p).astype(np.float32)
         #mb_progress_rewards = - (progress_diffs < 0).astype(np.float32)
         #mb_progress_rewards *= (1 - mb_dones) # zero intrinsic reward if done
         mb_progress_rewards *= PROGRESS_REWARD_SCALE
