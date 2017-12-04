@@ -21,7 +21,7 @@ SKIPPING_PROGRESS_GRADS = False
 
 # original default was 7e-4
 PROGRESS_LEARNING_RATE = 7e-4
-LEARNING_RATE = 7e-4
+LEARNING_RATE = 7e-3
 
 # ENV IS RANDOM ACTION NOW!!!!
 
@@ -338,7 +338,7 @@ class Runner(object):
 
         # only negative rewards, always -1, for looping.
         mb_progress_rewards = -(mb_next_progress_p <= mb_progress_p).astype(np.float32)
-        mb_progress_rewards = (mb_next_progress_p > mb_progress_p).astype(np.float32)
+        #mb_progress_rewards += (mb_next_progress_p > mb_progress_p).astype(np.float32)
         #print(mb_progress_rewards <= 0)
         #mb_progress_rewards = - (mb_next_progress_p <= mb_progress_p).astype(np.float32)
         #mb_progress_rewards = - (progress_diffs < 0).astype(np.float32)
