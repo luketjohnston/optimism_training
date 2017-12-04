@@ -25,7 +25,7 @@ LEARNING_RATE = 7e-3
 
 # ENV IS RANDOM ACTION NOW!!!!
 
-ENV_N = 15
+ENV_N = 10
 
 PROGRESS_MIN_STEP = 1.000 # This seems to work well (.001)
 PROGRESS_LOSS_SCALE = 1.0 / PROGRESS_MIN_STEP # this seems necessary for stability
@@ -39,11 +39,14 @@ if zero_progress:
 
 POLICY_LOSS_SCALE = 1
 PROGRESS_REWARD_SCALE = 0.1
+REAL_REWARD_SCALE = 0.1
 #PROGRESS_REWARD_SCALE = .01
 #PROGRESS_REWARD_SCALE = 1.0
 #PROGRESS_REWARD_SCALE = .01 / PROGRESS_MIN_STEP
 
-MY_ENT_COEF = 0.03 # originally 0.01. 0.3 works with rew scale 1 sorta
+MY_ENT_COEF = 0.03 # .03 works for sure!
+MY_ENT_COEF = 0.02 # 
+#MY_ENT_COEF = 0.00 # originally 0.01. 0.3 works with rew scale 1 sorta
 #MY_ENT_COEF = 0.00 # originally 0.01
 #MY_ENT_COEF = 1 # originally 0.01
 #MY_ENT_COEF = 1.00 # originally 0.01
@@ -344,12 +347,14 @@ class Runner(object):
         #mb_progress_rewards = - (progress_diffs < 0).astype(np.float32)
         #mb_progress_rewards *= (1 - mb_dones) # zero intrinsic reward if done
         mb_progress_rewards *= PROGRESS_REWARD_SCALE
+        mb_rewards *= REAL_REWARD_SCALE
 
         #print(mb_obs)
         #print(mb_progress_t)
 
 
         #mb_rewards = mb_rewards + mb_progress_rewards
+
 
 
         #discount/bootstrap off value fn using only real rewards
@@ -363,6 +368,7 @@ class Runner(object):
             mb_rewards[n] = rewards
 
         mb_rewards_for_policy = mb_rewards + mb_progress_rewards
+        #mb_rewards_for_policy = mb_rewards
         # use only real rewards for value function target (not intrinsic rewards)
         #for n, (rewards, dones, value) in enumerate(zip(mb_real_rewards, mb_dones, last_values)):
         #    rewards = rewards.tolist()
