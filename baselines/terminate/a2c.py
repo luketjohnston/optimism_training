@@ -38,12 +38,12 @@ if zero_progress:
 
 
 POLICY_LOSS_SCALE = 1
-PROGRESS_REWARD_SCALE = 1.00
+PROGRESS_REWARD_SCALE = 0.1
 #PROGRESS_REWARD_SCALE = .01
 #PROGRESS_REWARD_SCALE = 1.0
 #PROGRESS_REWARD_SCALE = .01 / PROGRESS_MIN_STEP
 
-MY_ENT_COEF = 0.01 # originally 0.01
+MY_ENT_COEF = 0.03 # originally 0.01. 0.3 works with rew scale 1 sorta
 #MY_ENT_COEF = 0.00 # originally 0.01
 #MY_ENT_COEF = 1 # originally 0.01
 #MY_ENT_COEF = 1.00 # originally 0.01
@@ -54,7 +54,7 @@ VF_COEF = .5 # originally 0.5
 
 # when we take a downward step, this is the gradient of the initial state (before
 # taking the step). Want it to be large (so dead ends get downweighted).
-DOWNWARD_STEP_END_GRAD = 5
+DOWNWARD_STEP_END_GRAD = 1
 
 if zero_all_except_progress:
   POLICY_LOSS_SCALE = 0.0
@@ -122,10 +122,10 @@ class Model(object):
         lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
         progress_lr = Scheduler(v=PROGRESS_LEARNING_RATE, nvalues=total_timesteps, schedule=lrschedule)
 
-        def train(obs, rewards, masks, actions, values, progress_t):
-            advs = rewards - values
+        def train(obs, rewards, rewards_for_pol, masks, actions, values, progress_t):
+            advs = rewards_for_pol - values
             # let's try no var reduction. This means neg rewards make pol less likely.
-            advs = rewards 
+            #advs = rewards 
             for step in range(len(obs)):
                 cur_lr = lr.value()
                 progress_cur_lr = progress_lr.value()
@@ -262,6 +262,7 @@ class Runner(object):
             #equal_ind = (next_progress_p == progress_p) 
             prog_dones = (next_progress_p < self.progress + PROGRESS_MIN_STEP)
             prog_dones = (next_progress_p <= self.progress)
+            prog_dones = (next_progress_p <= progress_p)
 
             # TODO: OK THE PROBLEM IS that the down-weighting is only happening on
             # the final state of the dead end.
@@ -274,9 +275,9 @@ class Runner(object):
                 #if not equal_ind[i]:
                 extra_progress_updates.append((
                     np.copy(self.obs[i]),np.copy(self.progress[i]) + 1.0)) # just update upward
-                # also want to down-weight current state, so ends of loops decline in progress
-                extra_progress_updates.append((
-                    np.copy(prev_obs[i]), np.copy(self.progress[i]) - 1.0)) # just update downward.
+                ## also want to down-weight current state, so ends of loops decline in progress
+                #extra_progress_updates.append((
+                #    np.copy(prev_obs[i]), np.copy(self.progress[i]) - 1.0)) # just update downward.
                 # reset env, and make sure to update obs for next timestep
                 self.obs[i,:,:,-self.nc:] = self.env.reset_i(i) 
             self.dones = np.logical_or(env_dones, prog_dones)
@@ -317,12 +318,27 @@ class Runner(object):
         # the below is always positive, unless last step (env resets when dec prog)
 
         # TODO A1: add negative backwards progress reward (so explores diff loops)
-        progress_diffs = mb_next_progress_p - mb_progress_t  
-        mb_progress_rewards = mb_next_progress_p - mb_progress_p
+        #progress_diffs = mb_next_progress_p - mb_progress_p  
+        #mb_progress_rewards = -np.maximum(-progress_diffs, 0.0) # only negative rewards
+        #mb_progress_rewards = np.maximum(mb_next_progress_p - mb_progress_p,0)
+        # if increasing progress, get constant reward.
+        #mb_progress_rewards = (mb_next_progress_p > mb_progress_t).astype(np.float32)
+        # otherwise, reward is negative total timesteps to get here
+        #mb_progress_rewards -= (mb_next_progress_p <= mb_progress_t).astype(np.float32) * (mb_progress_t)
+
+
+        #mb_progress_rewards = (mb_next_progress_p > mb_progress_p).astype(np.float32)
+        # otherwise, reward is negative total timesteps to get here
+        #mb_progress_rewards -= (mb_next_progress_p <= mb_progress_p).astype(np.float32) * (mb_progress_t)
+
+
         # looping has to have some negative reward, so that after progress of loop
         # has converged, there is a negative cost to it, so policy is updated to not start the loop.
         # THE above comment is not true. negative ADVANTAGE is what decreases prob, not total reward.
-        # mb_progress_rewards -= (mb_progress_rewards <= 0) 
+
+        # only negative rewards, always -1, for looping.
+        mb_progress_rewards = -(mb_next_progress_p <= mb_progress_p).astype(np.float32)
+        mb_progress_rewards = (mb_next_progress_p > mb_progress_p).astype(np.float32)
         #print(mb_progress_rewards <= 0)
         #mb_progress_rewards = - (mb_next_progress_p <= mb_progress_p).astype(np.float32)
         #mb_progress_rewards = - (progress_diffs < 0).astype(np.float32)
@@ -333,10 +349,10 @@ class Runner(object):
         #print(mb_progress_t)
 
 
-        mb_rewards = mb_rewards + mb_progress_rewards
+        #mb_rewards = mb_rewards + mb_progress_rewards
 
 
-        #discount/bootstrap off value fn
+        #discount/bootstrap off value fn using only real rewards
         for n, (rewards, dones, value) in enumerate(zip(mb_rewards, mb_dones, last_values)):
             rewards = rewards.tolist()
             dones = dones.tolist()
@@ -345,14 +361,26 @@ class Runner(object):
             else:
                 rewards = discount_with_dones(rewards, dones, self.gamma)
             mb_rewards[n] = rewards
+
+        mb_rewards_for_policy = mb_rewards + mb_progress_rewards
+        # use only real rewards for value function target (not intrinsic rewards)
+        #for n, (rewards, dones, value) in enumerate(zip(mb_real_rewards, mb_dones, last_values)):
+        #    rewards = rewards.tolist()
+        #    dones = dones.tolist()
+        #    if dones[-1] == 0:
+        #        rewards = discount_with_dones(rewards+[value], dones+[0], self.gamma)[:-1]
+        #    else:
+        #        rewards = discount_with_dones(rewards, dones, self.gamma)
+        #    mb_val_targets[n] = rewards
         mb_rewards = mb_rewards.flatten()
+        mb_rewards_for_policy = mb_rewards_for_policy.flatten()
         mb_actions = mb_actions.flatten()
         mb_values = mb_values.flatten()
         mb_masks = mb_masks.flatten()
         mb_progress_p = mb_progress_p.flatten()
         mb_progress_t = mb_progress_t.flatten()
         mb_next_progress_p = mb_next_progress_p.flatten()
-        return mb_obs, mb_rewards, mb_masks, mb_actions, mb_values, mb_real_rewards, mb_next_progress_p, mb_progress_rewards, mb_progress_t, extra_progress_updates
+        return mb_obs, mb_rewards, mb_rewards_for_policy, mb_masks, mb_actions, mb_values, mb_real_rewards, mb_next_progress_p, mb_progress_rewards, mb_progress_t, extra_progress_updates
 
 def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_coef=VF_COEF, ent_coef=MY_ENT_COEF, max_grad_norm=0.5, lr=LEARNING_RATE, lrschedule='linear', epsilon=1e-5, alpha=0.99, gamma=0.99, log_interval=100):
     tf.reset_default_graph()
@@ -381,13 +409,13 @@ def learn(policy, env, seed, nsteps=5, nstack=4, total_timesteps=int(80e6), vf_c
     for update in range(1, total_timesteps//nbatch+1):
         rendering = ((update // 30) % 50 == 0) and RENDERING
         display = (update % 200) == 1
-        obs, rewards, masks, actions, values, real_rewards, next_progress, progress_rewards, progress_t, extra_progress_updates = runner.run(rendering, display)
+        obs, rewards, rewards_for_policy, masks, actions, values, real_rewards, next_progress, progress_rewards, progress_t, extra_progress_updates = runner.run(rendering, display)
         accumulated_rewards += np.sum(real_rewards) # only want to record times when we get positive reward
         progress_rewards = np.sum(progress_rewards)
         if np.sum(real_rewards > 0) > 0 and HALT_AFTER_REWARD:
           print("Found first reward after %d updates." % update)
           sys.exit()
-        policy_loss, value_loss, policy_entropy, progress_loss, total_loss = model.train(obs, rewards, masks, actions, values, progress_t)
+        policy_loss, value_loss, policy_entropy, progress_loss, total_loss = model.train(obs, rewards, rewards_for_policy, masks, actions, values, progress_t)
         if not SKIPPING_PROGRESS_GRADS:
           progress_end_loss = model.train_only_progress(extra_progress_updates)
         nseconds = time.time()-tstart
