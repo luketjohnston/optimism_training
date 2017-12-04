@@ -17,7 +17,7 @@ from baselines.terminate.utils import Scheduler, make_path, find_trainable_varia
 from baselines.terminate.policies import CnnPolicy
 from baselines.terminate.utils import cat_entropy, mse
 
-SKIPPING_PROGRESS_GRADS = False
+SKIPPING_PROGRESS_GRADS = True
 
 # original default was 7e-4
 PROGRESS_LEARNING_RATE = 7e-4
@@ -266,10 +266,6 @@ class Runner(object):
             prog_dones = (next_progress_p < self.progress + PROGRESS_MIN_STEP)
             prog_dones = (next_progress_p <= self.progress)
             prog_dones = (next_progress_p <= progress_p)
-
-            # TODO: OK THE PROBLEM IS that the down-weighting is only happening on
-            # the final state of the dead end.
-            # this is fine, it just has to happen faster than the upweights
 
 
             for i,done in enumerate(prog_dones):
